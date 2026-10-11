@@ -1,0 +1,738 @@
+---
+title: "ARDL Metode Peramalan Deret Waktu"
+author: "Sandra Berliana Putri"
+date: "2024-10-22"
+output: html_document
+---
+
+## *Packages*
+
+```{r}
+library(dLagM)
+library(dynlm)
+library(MLmetrics)
+library(lmtest)
+library(car)
+library(ggplot2)
+```
+
+## Import Data
+
+Data ini terdiri atas jumlah penumpang transjakarta sebagai peubah dependen (Y) dan penyesuain rute sebagai peubah independen (X) Indonesia periode Januari 2023 - Juni 2024.
+
+```{r}
+data <- read.csv("C:\\Users\\ASUS\\Downloads\\Data Jumlah Penumpang Transjakarta Harian Tahun 2023-2024.1 (2).csv")
+data <- data[,c(-1,-4)]
+data
+```
+
+```{r}
+# Membuat kolom tanggal yang dimulai dari 1 Januari 2023 dan memiliki 546 baris
+dates <- seq(from = as.Date("2023-01-01"), by = "day", length.out = 546)
+dates[546]
+# Menambahkan kolom tanggal ke dataset
+data$Date <- dates
+
+# Menampilkan data untuk memeriksa kolom baru
+head(data)
+```
+
+
+# Eksplorasi Data
+```{r}
+# Plot time series jumlah penumpang dengan sumbu x berupa tanggal
+plot(  data$Date, data$jumlah_penumpang_transjakarta, type = "l", xlab = "Date", ylab = "Number of Passengers", 
+     col = "blue", xaxt = "n")
+
+# Menambahkan tanggal pada sumbu x dengan format bulan dan tahun
+axis(1, at = seq(from = min(data$Date), to = max(data$Date), by = "months"),
+     labels = format(seq(from = min(data$Date), to = max(data$Date), by = "months"), "%b %Y"))
+
+# Menambahkan titik untuk data penumpang
+points(data[,1], pch = 20, col = "blue")
+```
+
+```{r}
+
+# Plot time series jumlah penumpang dengan sumbu x berupa tanggal
+plot(data$Date, data$jumlah_penumpang_transjakarta, type = "l", xlab = "Date", ylab = "Number of Passengers", 
+     col = "blue", xaxt = "n")
+
+# Menambahkan tanggal pada sumbu x dengan format "YYYY-MM"
+axis(1, at = seq(from = min(data$Date), to = max(data$Date), by = "month"),
+     labels = format(seq(from = min(data$Date), to = max(data$Date), by = "month"), "%Y-%m"))
+
+# Menambahkan titik untuk data penumpang
+points(data$Date, pch = 20, col = "blue")
+
+```
+
+
+
+```{r}
+ts.plot(data[,1], type="l", xlab = "Day", ylab="Number of Passengers", col="blue")
+points(data[,1], pch = 20, col = "blue")
+```
+
+## Pembagian Data
+```{r}
+Yt <- data$jumlah_penumpang_transjakarta
+Xt <- as.factor(data$PenyesuaianRute)
+
+data <- as.data.frame(cbind(Yt, Xt))
+```
+
+```{r}
+# Split Data
+training <- data[1:477,]
+testing <- data[478:546,]
+```
+
+```{r}
+# Data Time Series
+training.ts <- ts(training)
+testing.ts <- ts(testing)
+data.ts <- ts(data)
+```
+
+## Model Autoregressive
+
+Peubah dependen dipengaruhi oleh peubah independen pada waktu sekarang, serta dipengaruhi juga oleh peubah dependen itu sendiri pada satu waktu yang lalu maka model tersebut disebut *autoregressive* (Gujarati 2004).
+
+### Pemodelan
+
+Pemodelan Autoregressive dilakukan menggunakan fungsi `dLagM::ardlDlm()` . Fungsi tersebut akan menerapkan *autoregressive* berordo $(p,q)$ dengan satu prediktor. Fungsi umum dari `ardlDlm()` adalah sebagai berikut.
+
+```{r, eval=FALSE}
+ardlDlm(formula = NULL , data = NULL , x = NULL , y = NULL , p = 1 , q = 1 , 
+         remove = NULL )
+```
+
+Dengan $p$ adalah integer yang mewakili panjang *lag* yang terbatas dan $q$ adalah integer yang merepresentasikan ordo dari proses *autoregressive*.
+
+### *Lag* Optimum
+
+```{r}
+modelardl <- ardlBoundOrders(data = data.frame(data), ic = "AIC", 
+                                  formula = Yt ~ Xt )
+min_p=c()
+for(i in 1:5){
+  min_p[i]=min(modelardl$Stat.table[[i]])
+}
+q_opt=which(min_p==min(min_p, na.rm = TRUE))
+p_opt=which(modelardl$Stat.table[[q_opt]] == 
+              min(modelardl$Stat.table[[q_opt]], na.rm = TRUE))
+data.frame("q_optimum" = q_opt, "p_optimum" = p_opt, 
+           "AIC"=modelardl$min.Stat)
+```
+
+Dari tabel di atas, dapat terlihat bahwa nilai AIC terendah didapat ketika $p=14$ dan $q=5$, yaitu sebesar `14007.38`. Artinya, model autoregressive optimum didapat ketika $p=14$ dan $q=5$.
+
+Selanjutnya dapat dilakukan pemodelan dengan nilai $p$ dan $q$ optimum.
+
+### Pemodelan dengan *Lag* Optimum
+
+```{r}
+modelardl <- ardlDlm(formula = Yt ~ Xt, data = training, p = 14, q = 5)
+summary(modelardl)
+AIC(modelardl)
+BIC(modelardl)
+```
+
+Dari hasil tersebut, didapat bahwa peubah $x_t$, $x_{t-1}$, $y_{t-1}$, $y_{t-2}$, dan $y_{t-3}$ memiliki nilai $P-Value<0.05$. Hal ini menunjukkan bahwa peubah $x_t$, $x_{t-1}$, $y_{t-1}$, $y_{t-2}$, dan $y_{t-3}$ berpengaruh signifikan terhadap $y_t$ sementara yang lainnya tidak berpengaruh signifikan terhadap $y_t$. Artinya, jumlah penumpang transjakarta satu periode sebelumnya, dua periode sebelumnya, tiga periode sebelumnya, dan penyesuaian rute pada periode sekarang dan satu periode sebelumnya berpengaruh signifikan terhadap jumlah penumpang periode sekarang. Adapun model keseluruhannya adalah sebagai berikut.
+
+$$
+\hat{Y_t}=(6.223e+0)+(-6.849e+05)X_t-...+(8.843e-02)Y_{t-5}
+$$
+
+## Pemodelan ARDL dengan Library `dynlm`
+
+Pemodelan regresi dengan peubah *lag* tidak hanya dapat dilakukan dengan fungsi pada *packages* `dLagM` , tetapi terdapat *packages* `dynlm` yang dapat digunakan. Fungsi `dynlm` secara umum adalah sebagai berikut.
+
+```{r, eval=FALSE}
+dynlm(formula, data, subset, weights, na.action, method = "qr",
+  model = TRUE, x = FALSE, y = FALSE, qr = TRUE, singular.ok = TRUE,
+  contrasts = NULL, offset, start = NULL, end = NULL, ...)
+```
+
+Untuk menentukan `formula` model yang akan digunakan, tersedia fungsi tambahan yang memungkinkan spesifikasi dinamika (melalui `d()` dan `L()`) atau pola linier/siklus dengan mudah (melalui `trend()`, `season()`, dan `harmon()`). Semua fungsi formula baru mengharuskan argumennya berupa objek deret waktu (yaitu, `"ts"` atau `"zoo"`).
+
+### Pemodelan
+```{r}
+#sama dengan model ardl p=14 q=5
+cons_lm1 <- dynlm(Yt ~ Xt+L(Xt)+L(Xt,2)+L(Xt,3)+L(Xt,4)+L(Xt,5)+L(Xt,6)+L(Xt,7)+L(Xt,8)+L(Xt,9)+L(Xt,10)+L(Xt,11)+L(Xt,12)+L(Xt,13)+L(Xt,14)+L(Yt)+L(Yt,2)+L(Yt,3)+L(Yt,4)+L(Yt,5),data = training.ts)
+cons_lm1
+summary(cons_lm1)
+```
+
+### SSE
+```{r}
+deviance(cons_lm1)
+```
+
+### Uji Diagnostik
+
+#### Autokorelasi
+```{r}
+dwtest(cons_lm1)
+```
+
+Berdasarkan hasil uji diagnostik model yaitu autokorelasi diperoleh $P-Value>0.05$ untuk model ARDL. Artinya, *tidak terjadi autokorelasi* pada model ardl.
+
+#### Heterogenitas
+```{r}
+Box.test((residuals(cons_lm1))^2, type = "Ljung")
+```
+
+Berdasarkan hasil uji diagnostik model yaitu heterogenitas diperoleh $P-Value<0.05$. Artinya, *terjadi heterogenitas* pada model ardl.
+
+#### Normalitas
+```{r}
+shapiro.test(residuals(cons_lm1))
+ks.test(residuals(cons_lm1), "pnorm", mean=mean(residuals(cons_lm1)), sd=sd(residuals(cons_lm1)))
+nortest::ad.test(residuals(cons_lm1))
+tseries::jarque.bera.test(residuals(cons_lm1))
+```
+
+Berdasarkan hasil uji diagnostik model yaitu normalitas dengan menggunakan uji shapiro-wilk, kolmogorov smirnov, dan anderson darling diperoleh $P-Value<0.05$ untuk ardl. Artinya, *normalitas tidak terpenuhi* pada model ardl.
+Namun, berdasarkan hasil uji diagnostik model yaitu normalitas dengan menggunakan uji jarque bera diperoleh $P-Value>0.05$ untuk model ardl. Artinya, *normalitas terpenuhi* pada model ardl.
+
+#### Nilai Harapan Galat
+```{r}
+t.test(residuals(cons_lm1), mu = 0, conf.level = 0.95)
+```
+
+Berdasarkan hasil uji diagnostik model yaitu nilai harapan galat sama dengan 0 diperoleh $P-Value > 0.05$ artinya *nilai harapan galat = 0 terpenuhi*.
+
+Namun, akibat dari diagnostik model yaitu ragam homogen tidak terpenuhi maka peramalan belum dapat dilakukan. Dengan demikian perlu dilakukan penanganan terlebih dahulu agar mendapatkan model terbaik yang memenuhi diagnostik model.
+
+### CCF
+Plot ccf digunaka untuk melakukan pengecekan terhadap lag. Kemudian lag signifikan atau melebihi batas saja yang akan dimasukkan ke dalam model.
+
+```{r}
+ccf(data$Xt, data$Yt, main = "Cross-Correlation between Xt and Yt")
+
+```
+
+Berdasarkan plot ccf di atas diperoleh bahwa lag 0 hingga 24 signifikan sehingga plot ccf tidak membantu penanganan kasus ini.
+
+### Pemodelan dengan *Lag* Signifikan
+Penanganan selanjutnya adalah dengan mencoba memasukkan satu per satu lag signifikan dan berhenti ketika lag tersebut tidak signifikan dimulai dari lag Xt dan dilanjutkan dengan lag Yt.
+
+```{r}
+#sama dengan model ardl p=1 q=3
+cons_lm2 <- dynlm(Yt ~ Xt+L(Xt)+L(Yt)+L(Yt,2)+L(Yt,3),data = training.ts)
+cons_lm2
+summary(cons_lm2)
+```
+
+### SSE
+```{r}
+deviance(cons_lm2)
+```
+
+### Uji Diagnostik
+
+#### Autokorelasi
+```{r}
+dwtest(cons_lm2)
+```
+
+Berdasarkan hasil uji diagnostik model yaitu autokorelasi diperoleh $P-Value>0.05$ untuk model ARDL. Artinya, *tidak terjadi autokorelasi* pada model ardl.
+
+#### Heterogenitas
+```{r}
+Box.test((residuals(cons_lm2))^2, type = "Ljung")
+```
+
+Berdasarkan hasil uji diagnostik model yaitu heterogenitas diperoleh $P-Value>0.05$. Artinya, *tidak terjadi heterogenitas* pada model ardl.
+
+#### Normalitas
+```{r}
+shapiro.test(residuals(cons_lm2))
+ks.test(residuals(cons_lm2), "pnorm", mean=mean(residuals(cons_lm2)), sd=sd(residuals(cons_lm2)))
+nortest::ad.test(residuals(cons_lm2))
+tseries::jarque.bera.test(residuals(cons_lm2))
+```
+
+Berdasarkan hasil uji diagnostik model yaitu normalitas dengan menggunakan uji shapiro-wilk dan anderson darling diperoleh $P-Value<0.05$ untuk ardl. Artinya, *normalitas tidak terpenuhi* pada model ardl.
+Namun, berdasarkan hasil uji diagnostik model yaitu normalitas dengan menggunakan uji kolmogorov-smirnov dan jarque bera diperoleh $P-Value>0.05$ untuk model ardl. Artinya, *normalitas terpenuhi* pada model ardl.
+
+#### Nilai Harapan Galat
+```{r}
+t.test(residuals(cons_lm2), mu = 0, conf.level = 0.95)
+```
+
+Berdasarkan hasil uji diagnostik model yaitu nilai harapan galat sama dengan 0 diperoleh $P-Value > 0.05$ artinya *nilai harapan galat = 0 terpenuhi*.
+
+Akibat semua diagnostik model terpenuhi maka bisa dilanjutkan dengan peramalan.
+
+### Pemodelan untuk Peramalan
+```{r}
+modelardl2 <- ardlDlm(formula = Yt ~ Xt, data = training, p = 1, q = 3)
+summary(modelardl2)
+AIC(modelardl2)
+BIC(modelardl2)
+```
+
+
+### Peramalan
+```{r}
+foreardl <- forecast(model = modelardl2, x = training$Xt, h = 69)
+foreardl
+```
+
+### Akurasi
+
+```{r}
+# Akurasi Data Testing
+mapeardl <- MAPE(foreardl$forecasts, testing$Yt)
+mapeardl
+```
+
+```{r}
+# Akurasi Data Training
+GoF(modelardl)
+```
+
+### Fitted Values
+```{r}
+# 1. Syntax untuk fitted values pada data training
+fitted_values_train <- fitted(modelardl2)
+fitted_values_train
+```
+
+### Forecast 28 hari kedepan
+```{r}
+# 2. Forecast 28 hari ke depan setelah data testing (bukan data testing)
+forecast_28 <- forecast(model = modelardl2, x = data$Xt, h = 14)
+forecast_28
+```
+
+### MAPE manual
+```{r}
+# 3. Menghitung MAPE untuk data training dan testing secara manual
+# MAPE untuk Training
+actual_train <- training$Yt
+mape_train <- mean(abs((actual_train[1:474] - fitted_values_train) / actual_train[1:474])) * 100
+mape_train
+```
+
+```{r}
+# MAPE untuk Testing
+actual_test <- testing$Yt
+pred_test <- foreardl$forecasts  # Forecast hasil pada testing
+mape_test <- mean(abs((actual_test - pred_test) / actual_test)) * 100
+mape_test
+```
+
+### Plot
+
+```{r}
+par(mfrow=c(1,1))
+plot(testing$Xt, testing$Yt, type="b", col="black")
+points(testing$Xt, foreardl$forecasts,col="green")
+lines(testing$Xt, foreardl$forecasts,col="green")
+legend("topleft",c("aktual", "autoregressive"), lty=1, col=c("black","green"), cex=0.8)
+```
+
+### Multistep forecast
+```{r}
+
+# Initialize vectors to store forecasts and actuals
+forecasts <- numeric(length(testing$Yt))
+actuals <- testing$Yt
+
+model2 <- ardlDlm(formula = Yt ~ Xt, data = training, p = 1, q = 3)
+
+```
+
+```{r}
+# Iterative forecasting loop
+for (i in 1:length(testing$Yt)) {
+  # Define training data up to the i-th test point
+  updated_training <- rbind(training, testing[1:i, ])
+  
+  # Fit the ARDL model to the updated training data
+  model <- ardlDlm(formula = Yt ~ Xt, data = updated_training, p = 1, q = 3)
+  
+  # Forecast the next time step (i-th point in the test set)
+  next_forecast <- forecast(model = model, x = testing$Xt[i], h = 1)$forecasts
+  
+  # Store the forecasted value
+  forecasts[i] <- next_forecast
+}
+```
+
+#### MAPE Multistep
+```{r}
+# Calculate MAPE for testing data
+mape_testing <- MAPE(forecasts, actuals)
+cat("MAPE for testing data:", mape_testing, "\n")
+
+# Create a data frame for plotting
+forecast_data <- data.frame(
+  Date = 478:546,
+  Actual = actuals,
+  Forecast = forecasts
+)
+Forecast = forecasts
+forecast_testing = forecasts
+```
+
+### Plot
+```{r}
+# Inisialisasi tanggal dari 21 April 2024 hingga 30 Juni 2024
+forecast_data$Date <- seq(from = as.Date("2024-04-21"), to = as.Date("2024-06-28"), by = "day")
+
+
+# Plot actual vs. forecasted values dengan rentang tanggal yang disesuaikan
+ggplot(forecast_data, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual"), size = 0.5) +
+  geom_line(aes(y = Forecast, color = "Forecast"), size = 0.5, linetype = "dashed") +
+  labs(
+    title = "Actual vs Forecasted Passenger Numbers",
+    x = "Date",
+    y = "Number of Passengers"
+  ) +
+  scale_color_manual(
+    name = "Legend",
+    values = c("Actual" = "black", "Forecast" = "blue")
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+Date <- seq(from = as.Date("2024-04-22"), to = as.Date("2024-06-29"), by = "day")
+# Plot the actual vs. forecasted values
+ggplot(forecast_data, aes(x = Date)) +
+  geom_line(aes(y = Actual, color = "Actual"), size = 0.5) +
+  geom_line(aes(y = Forecast, color = "Forecast"), size = 0.5, linetype = "dashed") +
+  labs(
+    title = "Actual vs Forecasted Passenger Numbers",
+    x = "Date",
+    y = "Number of Passengers"
+  ) +
+  scale_color_manual(
+    name = "Legend",
+    values = c("Actual" = "black", "Forecast" = "blue")
+  ) +
+  theme_minimal()
+```
+
+```{r}
+model2.1 <-  dynlm(Yt ~ Xt+L(Xt)+L(Yt)+L(Yt,2)+L(Yt,3),data = training.ts)
+
+dwtest(model2.1)
+Box.test((residuals(model2.1))^2, type = "Ljung")
+tseries::jarque.bera.test(residuals(model2))
+ks.test(residuals(model2.1), "pnorm",mean=mean(residuals(model2.1)),sd=sd(residuals(model2.1)))
+
+```
+
+```{r}
+y1 <- training$Yt
+y1 <- y1[-c(1:3)]
+y1 <- matrix(nrow=474, ncol=1, y1)
+
+y2 <- model2.1$fitted.values
+y2 <- matrix(nrow=474, ncol=1, y2)
+
+mape <- function(y1, y2) {
+  mean(abs((y1 - y2) / y1)) * 100
+}
+
+mape(y1,y2) #mape testing
+```
+
+### Plot akhir
+```{r}
+library(ggplot2)
+# Inisialisasi vector untuk menyimpan prediksi
+forecasts <- numeric(14)  # Menyimpan prediksi 14 hari ke depan
+
+# Salin data training dan testing sebagai data awal
+updated_training <- training
+
+# Multistep forecasting loop untuk 14 hari ke depan
+for (i in 1:14) {
+  # Fit the ARDL model ke data training yang diperbarui
+  model <- ardlDlm(formula = Yt ~ Xt, data = updated_training, p = 1, q = 3)
+  
+  # Forecast untuk langkah ke-i
+  # Ambil Xt dari data testing atau sebelumnya jika di luar data testing
+  if (i <= nrow(testing)) {
+    next_Xt <- testing$Xt[i]
+  } else {
+    next_Xt <- tail(updated_training$Xt, 1) # Gunakan Xt terakhir dari data yang diperbarui
+  }
+  
+  # Prediksi nilai Yt berikutnya
+  next_forecast <- forecast(model = model, x = next_Xt, h = 1)$forecasts
+  
+  # Simpan hasil prediksi
+  forecasts[i] <- next_forecast
+  
+  # Perbarui data training dengan prediksi baru
+  new_data <- data.frame(Yt = next_forecast, Xt = next_Xt)
+  updated_training <- rbind(updated_training, new_data)
+}
+
+# Hasil prediksi
+forecasts
+
+```
+
+
+```{r}
+# Buat vektor hari untuk sumbu X
+days <- seq(from = as.Date("2024-06-30"), to = as.Date("2024-07-13"), by = "day")
+
+# Buat plot sederhana
+plot(
+  x = days, 
+  y = forecasts, 
+  type = "b",  # Menggunakan garis dan titik
+  col = "blue",  # Warna garis biru
+  pch = 16,  # Bentuk titik bulat
+  xlab = "Date", 
+  ylab = "Number of Passengers"
+)
+
+# Tambahkan grid agar lebih mudah dibaca
+grid()
+
+```
+
+```{r}
+# Initialize a vector to store forecasts
+forecasts <- numeric(14)
+
+# Gunakan data training awal
+updated_data <- training
+
+# Iteratif forecast untuk 14 hari ke depan
+for (i in 1:14) {
+  # Fit ARDL model ke data yang telah diperbarui
+  model <- ardlDlm(formula = Yt ~ Xt, data = updated_data, p = 1, q = 3)
+  
+  # Forecast untuk hari berikutnya
+  next_forecast <- forecast(model = model, x = tail(updated_data$Xt, 1), h = 1)$forecasts
+  
+  # Simpan hasil forecast
+  forecasts[i] <- next_forecast
+  
+  # Update data dengan forecast sebagai nilai terbaru
+  new_row <- data.frame(Yt = next_forecast, Xt = tail(updated_data$Xt, 1)) # Xt dapat disesuaikan sesuai skenario
+  updated_data <- rbind(updated_data, new_row)
+}
+
+# Buat vektor hari untuk plot
+days <- 1:14
+
+# Plot hasil forecast
+plot(
+  x = days, 
+  y = forecasts, 
+  type = "b",  # Menggunakan garis dan titik
+  col = "blue",  # Warna garis biru
+  pch = 16,  # Bentuk titik bulat
+  xlab = "Hari", 
+  ylab = "Number of Passengers",
+)
+
+# Tambahkan grid agar lebih mudah dibaca
+grid()
+
+```
+
+```{r}
+Date =seq(from = as.Date("2023-01-01"), to = as.Date("2024-07-13"), by = "day")
+length(Date)
+Forecast = c(data$Yt,  forecasts)
+length(Forecast)
+
+# Extend the data frame
+combined_data <- data.frame(Date, Forecast
+)
+
+ggplot(combined_data, aes(x = Date)) +
+  geom_line(aes(y = Forecast), color = "black", size = 0.5) + # Garis prediksi hitam
+  labs(
+    x = "Date",
+    y = "Number of Passengers"
+  ) +
+  theme_minimal(base_size = 15) + # Tema minimalis yang mirip
+  theme(
+    plot.title = element_text(hjust = 0.5), # Judul tengah dan tebal
+    panel.grid.major = element_blank(), # Menghapus grid utama
+    panel.grid.minor = element_blank()  # Menghapus grid minor
+  )
+```
+
+```{r}
+# Extend the data frame
+combined_data <- data.frame(
+  Date = Date,
+  Forecast = Forecast
+)
+
+# Panjang data aktual
+actual_length <- length(data$Yt)
+
+# Plot data aktual dan prediksi dengan warna berbeda
+ggplot() +
+  # Garis data aktual (hitam)
+  geom_line(data = combined_data[1:actual_length, ], aes(x = Date, y = Forecast), color = "black", size = 0.5) +
+  # Garis data prediksi (biru)
+  geom_line(data = combined_data[(actual_length + 1):nrow(combined_data), ], aes(x = Date, y = Forecast), color = "blue", size = 0.5) +
+  labs(
+    x = "Date",
+    y = "Number of Passengers",
+    title = "Actual vs Forecasted Passenger Numbers"
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5), # Judul tengah
+    panel.grid.major = element_blank(), # Menghapus grid utama
+    panel.grid.minor = element_blank()  # Menghapus grid minor
+  )
+
+```
+
+```{r}
+# Extend the data frame dengan label untuk Actual dan Forecast
+combined_data <- data.frame(
+  Date = Date,
+  Value = Forecast,
+  Type = c(rep("Actual", length(data$Yt)), rep("Forecast", length(forecasts)))
+)
+
+# Plot gabungan
+ggplot(combined_data, aes(x = Date, y = Value, color = Type)) +
+  geom_line(size = 0.5) + # Garis untuk masing-masing tipe
+  labs(
+    x = "Date",
+    y = "Number of Passengers",
+    title = "Actual vs Forecasted Passenger Numbers"
+  ) +
+  scale_color_manual(
+    values = c("Actual" = "black", "Forecast" = "blue") # Hitam untuk Actual, Biru untuk Forecast
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5), # Judul tengah
+    panel.grid.major = element_blank(), # Menghapus grid utama
+    panel.grid.minor = element_blank()  # Menghapus grid minor
+  )
+
+```
+
+```{r}
+# Panjang data aktual
+actual_length <- length(data$Yt)
+
+# Extend data frame untuk kompatibilitas plot
+combined_data <- data.frame(
+  Date = Date,
+  Value = Forecast
+)
+
+# Plot data aktual (hitam) dan timpa dengan prediksi (biru)
+ggplot(combined_data, aes(x = Date, y = Value)) +
+  # Garis data aktual (hitam)
+  geom_line(data = combined_data[1:actual_length, ], aes(x = Date, y = Value), color = "black", size = 0.5) +
+  # Garis data prediksi (biru) menimpa garis hitam
+  geom_line(data = combined_data[(actual_length + 1):nrow(combined_data), ], aes(x = Date, y = Value), color = "blue", size = 0.5) +
+  labs(
+    x = "Date",
+    y = "Number of Passengers",
+    title = "Actual vs Forecasted Passenger Numbers"
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5), # Judul tengah
+    panel.grid.major = element_blank(), # Menghapus grid utama
+    panel.grid.minor = element_blank()  # Menghapus grid minor
+  )
+
+```
+
+```{r}
+# Extend data frame dengan prediksi dan actual yang terhubung
+combined_data <- data.frame(
+  Date = Date,
+  Value = Forecast,
+  Type = c(rep("Actual", length(data$Yt)), rep("Forecast", length(forecasts)))
+)
+
+# Gabungkan data terakhir dari aktual ke prediksi
+connection_point <- data.frame(
+  Date = Date[length(data$Yt)],
+  Value = Forecast[length(data$Yt)],
+  Type = "Forecast"
+)
+
+# Tambahkan connection_point ke data prediksi
+connected_data <- rbind(combined_data, connection_point)
+
+# Plot data
+ggplot() +
+  # Garis data aktual (hitam)
+  geom_line(data = combined_data[combined_data$Type == "Actual", ], 
+            aes(x = Date, y = Value), color = "black", size = 0.5) +
+  # Garis data prediksi (biru), termasuk connection_point
+  geom_line(data = connected_data[connected_data$Type == "Forecast", ], 
+            aes(x = Date, y = Value), color = "blue", size = 0.5) +
+  labs(
+    x = "Date",
+    y = "Number of Passengers",
+    title = "Actual vs Forecasted Passenger Numbers (Connected)"
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5), # Judul tengah
+    panel.grid.major = element_blank(), # Menghapus grid utama
+    panel.grid.minor = element_blank()  # Menghapus grid minor
+  )
+
+```
+
+```{r}
+library(ggplot2)
+
+# Konversi kolom Date menjadi tipe Date
+combined_data$Date <- as.Date(combined_data$Date)
+connected_data$Date <- as.Date(connected_data$Date)
+
+# Plot data dengan sumbu x diformat
+ggplot() +
+  # Garis data aktual (hitam)
+  geom_line(data = combined_data[combined_data$Type == "Actual", ], 
+            aes(x = Date, y = Value), color = "black", size = 0.5) +
+  # Garis data prediksi (biru), termasuk connection_point
+  geom_line(data = connected_data[connected_data$Type == "Forecast", ], 
+            aes(x = Date, y = Value), color = "blue", size = 0.5) +
+  labs(
+    x = "Date",
+    y = "Number of Passengers",
+    title = "Actual vs Forecasted Passenger Numbers (Connected)"
+  ) +
+  scale_x_date(
+    date_labels = "%b %Y", # Format label sumbu x
+    date_breaks = "1 month" # Jarak antar label
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5), # Judul tengah
+    panel.grid.major = element_blank(), # Menghapus grid utama
+    panel.grid.minor = element_blank()  # Menghapus grid minor
+  )
+
+```
+
+
+
+
